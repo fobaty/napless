@@ -39,6 +39,7 @@ settings, shows you what is running, and puts everything back on exit.
 | **Restores what it changed** | The previous `sleep` / `displaysleep` / `disablesleep` values are written back on Quit, Ctrl+C, SIGTERM or SIGHUP |
 | **Battery profile untouched** | Only the AC profile is ever modified |
 | **Live CPU, RAM, temperature and energy** | Read from Mach, the SMC and IOKit, no root, no helper processes |
+| **Energy spent since start-up** | Terminal power integrated over time into Wh or kWh |
 
 > Lid-closed mode is a **maintenance and power-supply feature**. Running a
 > MacBook sealed in a bag with the lid shut restricts airflow and stresses the
@@ -106,16 +107,34 @@ On shutdown the snapshot taken at start-up is written back verbatim. `pmset`
 reports failures on stderr while still exiting `0`, so Napless treats a non-empty
 stderr as an error rather than trusting the exit status.
 
-Energy comes from the `AppleSmartBattery` registry entry: charge level, live watt
-draw, and whether the pack is charging or running on AC. The watt figure is current
-multiplied by voltage, signed the way the pack reports the current; the charge state
-is read separately because the sign alone is not reliable. Temperatures come straight
-from the System Management Controller over IOKit. The
+Energy comes from the `AppleSmartBattery` registry entry over IOKit, which needs no
+root and no helper process. The entry publishes the terminal power in milliwatts, and
+Napless integrates that into a running total, so the gauge shows how much energy has
+been spent since start-up alongside the live watt figure and the charge state. The
+total switches from watt hours to kilowatt hours once it grows past 100 Wh.
+
+There is no lifetime counter to read: the registry's `Accumulated*` telemetry is
+refreshed in bursts every half minute or so, so differencing it over a short interval
+yields anything from 11 W to 190 W for the same machine. Integrating the published
+power is the honest alternative, and it is exact to within the staleness of the
+reading.
+
+One caveat: the figure is battery-path energy. On battery that is the whole machine's
+draw, but while plugged in it counts only what flows into the pack, because macOS does
+not expose the mains path to unprivileged callers. A Mac on AC drawing 190 W with a
+pack absorbing 21 W will therefore report well under its real consumption.
+
+The charge share is derived from `CurrentCapacity` against `MaxCapacity` rather than
+assumed to be a percentage, since `MaxCapacity` is 100 on most packs but not all.
+
+Temperatures come straight from the System Management Controller over IOKit. The
 SMC key that carries the CPU die temperature differs between Intel and Apple
 silicon, so the candidates (`Tp0T`, `TC0P`, `TC0D`, `TC0H`, `Tp09`) are probed
 once at start-up and the first that returns a plausible reading is used. Implausible
 values are discarded and the last good reading is held briefly, so the gauge never
-flashes a bogus number.
+flashes a bogus number. A key that reads back a value is kept even when that value is
+momentarily implausible, because the key list is probed only once per process and a
+single placeholder sample would otherwise disable the gauge until the next restart.
 
 ## Security
 

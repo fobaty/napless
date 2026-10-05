@@ -332,14 +332,16 @@ mod tests {
         assert_eq!(chosen, None);
     }
 
-    /// The die periodically reports a placeholder in the low single digits, so a
-    /// sample is retried until the sensor produces something sane.
+    /// The die periodically reports a placeholder in the low single digits. The SMC
+    /// also caches its answer for tens of seconds at a time, so retrying inside a
+    /// second can just reread the same placeholder; the window is spread over ten
+    /// seconds to be sure a fresh value arrives.
     fn read_sane_temperature(probe: &mut TemperatureProbe) -> f64 {
         for _ in 0..40 {
             if let Temperature::Value(celsius) = probe.poll() {
                 return celsius;
             }
-            thread::sleep(Duration::from_millis(25));
+            thread::sleep(Duration::from_millis(250));
         }
         panic!("the SMC never reported a sane temperature on this Mac");
     }

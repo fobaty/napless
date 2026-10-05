@@ -136,6 +136,7 @@ fn announce(session: &Session, daemon: bool) {
 
 fn run_daemon(session: &Session) {
     let mut cpu = metrics::CpuSampler::default();
+    let mut meter = energy::EnergyMeter::new();
     let mut reported = false;
 
     while !session.shutdown_requested() {
@@ -151,7 +152,10 @@ fn run_daemon(session: &Session) {
         }
 
         let memory = metrics::memory().map(|m| format!("{:.1}/{:.1} GB", m.used_gb, m.total_gb));
-        let power = energy::energy().map(|e| e.summary());
+        let power = energy::energy().map(|e| {
+            meter.sample(e.watts);
+            format!("{}  |  spent {:.2} Wh", e.summary(), meter.watt_hours())
+        });
         println!(
             "active for {}  |  cpu {:>3}%  |  ram {}  |  battery {}  |  on battery: {}",
             session::format_elapsed(status.elapsed),

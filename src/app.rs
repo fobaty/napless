@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::energy::{self, Energy};
+use crate::energy::{self, Energy, EnergyMeter};
 use crate::metrics::{self, CpuSampler, Memory, Temperature, TemperatureProbe};
 use crate::power;
 use crate::session::{self, PowerState, Session};
@@ -39,6 +39,7 @@ struct NaplessApp {
     cpu: CpuSampler,
     probe: TemperatureProbe,
     snapshot: Snapshot,
+    energy_meter: EnergyMeter,
     last_sample: Instant,
     error: Option<String>,
     closing: bool,
@@ -56,6 +57,7 @@ impl NaplessApp {
                 temperature: Temperature::Pending,
                 energy: None,
             },
+            energy_meter: EnergyMeter::new(),
             last_sample: Instant::now(),
             error: None,
             closing: false,
@@ -80,6 +82,9 @@ impl NaplessApp {
         self.snapshot.memory = metrics::memory();
         self.snapshot.temperature = self.probe.poll();
         self.snapshot.energy = energy::energy();
+        if let Some(reading) = self.snapshot.energy {
+            self.energy_meter.sample(reading.watts);
+        }
     }
 
     fn header(&self, ui: &mut egui::Ui, status: &session::Status) {
@@ -152,9 +157,13 @@ impl NaplessApp {
                     _ => egui::Color32::from_rgb(214, 154, 33),
                 };
                 (
-                    egui::RichText::new(format!("BAT   {}", energy.summary()))
-                        .monospace()
-                        .color(color),
+                    egui::RichText::new(format!(
+                        "BAT   {}   spent {}",
+                        energy.summary(),
+                        self.energy_meter.summary()
+                    ))
+                    .monospace()
+                    .color(color),
                     energy.percent,
                 )
             }
