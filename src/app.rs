@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+use crate::energy::{self, Energy};
 use crate::metrics::{self, CpuSampler, Memory, Temperature, TemperatureProbe};
 use crate::power;
 use crate::session::{self, PowerState, Session};
@@ -13,14 +14,15 @@ struct Snapshot {
     cpu_percent: Option<f64>,
     memory: Option<Memory>,
     temperature: Temperature,
+    energy: Option<Energy>,
 }
 
 pub fn run(session: Arc<Session>) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Napless")
-            .with_inner_size([420.0, 330.0])
-            .with_min_inner_size([400.0, 310.0]),
+            .with_inner_size([420.0, 356.0])
+            .with_min_inner_size([400.0, 336.0]),
         ..Default::default()
     };
 
@@ -52,6 +54,7 @@ impl NaplessApp {
                 cpu_percent: None,
                 memory: None,
                 temperature: Temperature::Pending,
+                energy: None,
             },
             last_sample: Instant::now(),
             error: None,
@@ -76,6 +79,7 @@ impl NaplessApp {
         }
         self.snapshot.memory = metrics::memory();
         self.snapshot.temperature = self.probe.poll();
+        self.snapshot.energy = energy::energy();
     }
 
     fn header(&self, ui: &mut egui::Ui, status: &session::Status) {
@@ -137,6 +141,29 @@ impl NaplessApp {
             memory_percent as f32 / 100.0,
             memory_label,
             memory_percent as f32,
+        ));
+        ui.add_space(4.0);
+
+        let (energy_label, energy_percent) = match self.snapshot.energy {
+            Some(energy) => {
+                let color = match energy.state() {
+                    "charging" => egui::Color32::from_rgb(46, 160, 67),
+                    "on AC" => egui::Color32::from_rgb(66, 133, 200),
+                    _ => egui::Color32::from_rgb(214, 154, 33),
+                };
+                (
+                    egui::RichText::new(format!("BAT   {}", energy.summary()))
+                        .monospace()
+                        .color(color),
+                    energy.percent,
+                )
+            }
+            None => (egui::RichText::new("BAT   --").monospace().weak(), 0.0),
+        };
+        ui.add(bar(
+            energy_percent as f32 / 100.0,
+            energy_label,
+            energy_percent as f32,
         ));
         ui.add_space(4.0);
 
@@ -219,7 +246,7 @@ impl NaplessApp {
     }
 }
 
-fn bar(fraction: f32, text: String, percent: f32) -> egui::ProgressBar {
+fn bar(fraction: f32, text: impl Into<egui::WidgetText>, percent: f32) -> egui::ProgressBar {
     egui::ProgressBar::new(fraction.clamp(0.0, 1.0))
         .text(text)
         .desired_height(18.0)

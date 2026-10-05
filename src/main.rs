@@ -1,4 +1,5 @@
 mod app;
+mod energy;
 mod metrics;
 mod power;
 mod session;
@@ -150,13 +151,15 @@ fn run_daemon(session: &Session) {
         }
 
         let memory = metrics::memory().map(|m| format!("{:.1}/{:.1} GB", m.used_gb, m.total_gb));
+        let power = energy::energy().map(|e| e.summary());
         println!(
-            "active for {}  |  cpu {:>3}%  |  ram {}  |  on battery: {}",
+            "active for {}  |  cpu {:>3}%  |  ram {}  |  battery {}  |  on battery: {}",
             session::format_elapsed(status.elapsed),
             cpu.sample()
                 .map(|percent| format!("{percent:.0}"))
                 .unwrap_or_else(|| "--".to_string()),
             memory.unwrap_or_else(|| "--".to_string()),
+            power.unwrap_or_else(|| "--".to_string()),
             status.on_battery_power,
         );
         reported = true;

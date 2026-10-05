@@ -161,6 +161,52 @@ const MAX_PLAUSIBLE_CELSIUS: f64 = 120.0;
 /// How long a good reading stays valid after the SMC stops returning one.
 const STALE_AFTER: Duration = Duration::from_secs(5);
 
+/// Outcome of probing one candidate key. An absent key and a key stuck on a
+/// placeholder have to stay distinguishable: only the second can recover.
+enum KeyProbe {
+    Missing,
+    Placeholder,
+    Reading,
+}
+
+/// A key that reads back a value is live even when that value is momentarily
+/// implausible: Apple silicon periodically dips the die reading to a floor of a
+/// couple of degrees, so picking keys by plausibility alone would drop a working
+/// sensor whenever the sample landed in one of those dips. The first sane reading
+/// wins; failing that, a live key is still better than none.
+fn select_key(probes: impl IntoIterator<Item = ([u8; 4], KeyProbe)>) -> Option<[u8; 4]> {
+    let mut live = None;
+    for (key, probe) in probes {
+        match probe {
+            KeyProbe::Reading => return Some(key),
+            KeyProbe::Placeholder => {
+                live.get_or_insert(key);
+            }
+            KeyProbe::Missing => {}
+        };
+    }
+    live
+}
+
+fn find_key(service: &IOService) -> Option<[u8; 4]> {
+    select_key(CANDIDATE_KEYS.iter().map(|key| {
+        let probe = match service.read_key(key) {
+            Err(_) => KeyProbe::Missing,
+            Ok(value) => match decode_celsius(&value) {
+                Some(celsius) if is_plausible(celsius) => KeyProbe::Reading,
+                Some(_) => KeyProbe::Placeholder,
+                None => KeyProbe::Missing,
+            },
+        };
+        (**key, probe)
+    }))
+}
+
+fn read_celsius(service: &IOService, key: &[u8; 4]) -> Option<f64> {
+    let celsius = decode_celsius(&service.read_key(key).ok()?)?;
+    is_plausible(celsius).then_some(celsius)
+}
+
 fn is_plausible(celsius: f64) -> bool {
     (MIN_PLAUSIBLE_CELSIUS..=MAX_PLAUSIBLE_CELSIUS).contains(&celsius)
 }
@@ -191,10 +237,7 @@ impl TemperatureProbe {
 
         match IOService::init() {
             Ok(service) => {
-                probe.key = CANDIDATE_KEYS
-                    .iter()
-                    .map(|key| **key)
-                    .find(|key| probe.read_celsius(&service, key).is_some());
+                probe.key = find_key(&service);
                 probe.service = Some(service);
 
                 if probe.key.is_none() {
@@ -207,18 +250,12 @@ impl TemperatureProbe {
         probe
     }
 
-    fn read_celsius(&self, service: &IOService, key: &[u8; 4]) -> Option<f64> {
-        let value = service.read_key(key).ok()?;
-        let celsius = decode_celsius(&value)?;
-        is_plausible(celsius).then_some(celsius)
-    }
-
     /// Latest reading, or the reason none is available. Holds the previous
     /// value briefly when the SMC momentarily returns nothing, so the gauge
     /// does not flicker.
     pub fn poll(&mut self) -> Temperature {
         if let (Some(service), Some(key)) = (self.service.as_ref(), self.key) {
-            if let Some(celsius) = self.read_celsius(service, &key) {
+            if let Some(celsius) = read_celsius(service, &key) {
                 self.last_good = Some((celsius, Instant::now()));
                 return Temperature::Value(celsius);
             }
@@ -261,28 +298,69 @@ mod tests {
     }
 
     #[test]
+    fn picks_the_first_key_that_reports_a_sane_reading() {
+        let chosen = select_key([
+            (*b"TC0P", KeyProbe::Missing),
+            (*b"Tp0T", KeyProbe::Reading),
+            (*b"TC0D", KeyProbe::Reading),
+        ]);
+        assert_eq!(chosen, Some(*b"Tp0T"));
+    }
+
+    #[test]
+    fn keeps_a_live_key_while_it_reports_a_placeholder() {
+        // Apple silicon dips the die reading to a couple of degrees every so
+        // often. Dropping the key on such a sample would leave the gauge dead
+        // for the rest of the session, so a live key is kept.
+        let chosen = select_key([
+            (*b"TC0P", KeyProbe::Missing),
+            (*b"Tp0T", KeyProbe::Placeholder),
+        ]);
+        assert_eq!(chosen, Some(*b"Tp0T"));
+
+        // A sane reading later on still wins over the earlier live key.
+        let chosen = select_key([
+            (*b"Tp0T", KeyProbe::Placeholder),
+            (*b"TC0D", KeyProbe::Reading),
+        ]);
+        assert_eq!(chosen, Some(*b"TC0D"));
+    }
+
+    #[test]
+    fn ignores_keys_that_do_not_exist_at_all() {
+        let chosen = select_key([(*b"TC0P", KeyProbe::Missing), (*b"TC0D", KeyProbe::Missing)]);
+        assert_eq!(chosen, None);
+    }
+
+    /// The die periodically reports a placeholder in the low single digits, so a
+    /// sample is retried until the sensor produces something sane.
+    fn read_sane_temperature(probe: &mut TemperatureProbe) -> f64 {
+        for _ in 0..40 {
+            if let Temperature::Value(celsius) = probe.poll() {
+                return celsius;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        panic!("the SMC never reported a sane temperature on this Mac");
+    }
+
+    #[test]
     fn reads_cpu_temperature_without_root() {
         let mut probe = TemperatureProbe::start();
         assert!(probe.error.is_none(), "{:?}", probe.error);
 
-        match probe.poll() {
-            Temperature::Value(celsius) => {
-                assert!(
-                    (MIN_PLAUSIBLE_CELSIUS..=MAX_PLAUSIBLE_CELSIUS).contains(&celsius),
-                    "{celsius} is not a sane temperature"
-                );
-                assert!(probe.sensor_name().is_some());
-            }
-            other => panic!("expected a reading, got {other:?}"),
-        }
+        let celsius = read_sane_temperature(&mut probe);
+        assert!(
+            (MIN_PLAUSIBLE_CELSIUS..=MAX_PLAUSIBLE_CELSIUS).contains(&celsius),
+            "{celsius} is not a sane temperature"
+        );
+        assert!(probe.sensor_name().is_some());
     }
 
     #[test]
     fn holds_the_last_reading_briefly_when_the_smc_goes_quiet() {
         let mut probe = TemperatureProbe::start();
-        let Temperature::Value(first) = probe.poll() else {
-            panic!("no reading available on this Mac");
-        };
+        let first = read_sane_temperature(&mut probe);
 
         probe.key = Some(*b"ZZZZ");
         match probe.poll() {
