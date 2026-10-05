@@ -112,12 +112,13 @@ impl Battery {
     }
 
     /// Terminal power in watts, from the published milliwatt figure when it is
-    /// available and from current times voltage otherwise.
+    /// available and from current times voltage otherwise. Both readings arrive
+    /// sign-extended, so they are read as integers rather than through `f64`.
     fn watts(&self) -> Option<f64> {
         let published = self
-            .number("BatteryPower")
-            .filter(|milliwatts| milliwatts.abs() > 0.0)
-            .map(|milliwatts| milliwatts.abs() / MILLIWATTS_PER_WATT);
+            .integer("BatteryPower")
+            .filter(|milliwatts| *milliwatts != 0)
+            .map(|milliwatts| milliwatts.abs() as f64 / MILLIWATTS_PER_WATT);
         let derived = self
             .amperage()
             .zip(self.number("AppleRawBatteryVoltage"))
@@ -367,12 +368,14 @@ mod tests {
     }
 
     #[test]
-    fn reads_amperage_without_losing_the_sign() {
-        // A double cannot hold a value within 1557 of 2^64: the low bits are
-        // rounded off, which is why the registry value is read as an integer.
-        let as_double = (u64::MAX - 1556) as f64;
-        assert_ne!(as_double as u64 as i64, -1557);
-        assert_eq!((-1557i64) as f64 as i64, -1557);
-        assert_eq!(2223.0_f64 as i64, 2223);
+    fn reads_the_signed_registry_values_without_losing_precision() {
+        // Apple sign-extends both the current and the published milliwatt power,
+        // so both arrive just under 2^64. A double cannot hold a value that
+        // close to 2^64: the low bits are rounded off, which is why these are read
+        // as integers. Reading -15923 mW through f64 would give roughly 1.8e16 W.
+        let as_double = (u64::MAX - 15922) as f64;
+        assert!(as_double / 1000.0 > 1e16);
+        assert_eq!((-15923i64).unsigned_abs() as f64 / 1000.0, 15.923);
+        assert_eq!(2223i64.unsigned_abs() as f64, 2223.0);
     }
 }
