@@ -1,0 +1,23 @@
+[package]
+name = "napless"
+version = "0.1.0"
+edition = "2021"
+description = "Keeps the MacBook awake with the lid closed while on AC power"
+license = "MIT"
+
+[dependencies]
+# `termination` enables handling SIGINT/SIGTERM/SIGHUP, so the sleep
+# protection is restored on any graceful shutdown, not just Ctrl+C.
+ctrlc = { version = "3.4", features = ["termination"] }
+eframe = "0.36.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+# Reads die temperatures straight from the System Management Controller, which
+# needs no root and no external tools.
+smc-lib = "0.1.2"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

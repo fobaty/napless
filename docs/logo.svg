@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Napless">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d4653"/>
+      <stop offset="1" stop-color="#222831"/>
+    </linearGradient>
+    <linearGradient id="lid" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4a5461"/>
+      <stop offset="1" stop-color="#2b323c"/>
+    </linearGradient>
+  </defs>
+
+  <!-- closed lid, seen from the front-left -->
+  <g>
+    <rect x="34" y="66" width="188" height="126" rx="12" fill="url(#lid)" stroke="#171b21" stroke-width="4"/>
+    <rect x="48" y="80" width="160" height="98" rx="6" fill="#12161c"/>
+    <!-- power glyph -->
+    <g stroke="#57d68d" stroke-width="9" stroke-linecap="round" fill="none">
+      <path d="M128 104 v30"/>
+      <path d="M110 112 a 24 24 0 1 0 36 0"/>
+    </g>
+  </g>
+
+  <!-- base, slightly offset for depth -->
+  <path d="M28 198 h200 l-14 34 a10 10 0 0 1 -9 6 h-154 a10 10 0 0 1 -9 -6 z"
+        fill="url(#body)" stroke="#171b21" stroke-width="4" stroke-linejoin="round"/>
+  <rect x="104" y="212" width="48" height="6" rx="3" fill="#171b21"/>
+
+  <!-- rising heat, meaning "running while shut" -->
+  <g stroke="#e6a33a" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.95">
+    <path d="M96 52 c 8 -10 -8 -18 0 -28"/>
+    <path d="M128 44 c 8 -12 -8 -20 0 -32"/>
+    <path d="M160 52 c 8 -10 -8 -18 0 -28"/>
+  </g>
+</svg>
