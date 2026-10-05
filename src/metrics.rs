@@ -10,8 +10,8 @@ unsafe extern "C" {
     fn mach_host_self() -> libc::mach_port_t;
 }
 
-const PAGE_SIZE: f64 = 4096.0;
 const BYTES_PER_GB: f64 = 1024.0 * 1024.0 * 1024.0;
+const FALLBACK_PAGE_SIZE: u64 = 4096;
 const CPU_STATES: usize = 4;
 const IDLE_STATE: usize = libc::CPU_STATE_IDLE as usize;
 const MIN_SAMPLE_GAP: Duration = Duration::from_millis(200);
@@ -83,12 +83,13 @@ fn cpu_ticks() -> Option<[u64; CPU_STATES]> {
 
 pub fn memory() -> Option<Memory> {
     let total_bytes = total_memory_bytes()?;
+    let page_size = page_size();
     let stats = vm_statistics()?;
 
     // Matches what Activity Monitor counts as "Memory Used": app memory plus
     // wired memory plus the compressed footprint.
     let used_pages = stats.active_count + stats.wire_count + stats.compressor_page_count;
-    let used_bytes = used_pages as f64 * PAGE_SIZE;
+    let used_bytes = used_pages as f64 * page_size;
 
     Some(Memory {
         used_gb: used_bytes / BYTES_PER_GB,
@@ -98,11 +99,21 @@ pub fn memory() -> Option<Memory> {
 }
 
 fn total_memory_bytes() -> Option<u64> {
+    sysctl_u64(c"hw.memsize")
+}
+
+/// Apple silicon uses 16 KiB VM pages and Intel uses 4 KiB, so the size has to
+/// be queried: assuming the wrong one reports a quarter of the real memory.
+fn page_size() -> f64 {
+    sysctl_u64(c"hw.pagesize").unwrap_or(FALLBACK_PAGE_SIZE) as f64
+}
+
+fn sysctl_u64(name: &std::ffi::CStr) -> Option<u64> {
     let mut value: u64 = 0;
     let mut size = std::mem::size_of::<u64>();
     let result = unsafe {
         libc::sysctlbyname(
-            c"hw.memsize".as_ptr(),
+            name.as_ptr(),
             std::ptr::addr_of_mut!(value) as *mut libc::c_void,
             &mut size,
             std::ptr::null_mut(),
@@ -296,5 +307,39 @@ mod tests {
         let memory = memory().expect("memory statistics unavailable");
         assert!(memory.total_gb > 0.0);
         assert!(memory.used_gb <= memory.total_gb);
+    }
+
+    #[test]
+    fn page_size_comes_from_the_kernel_not_a_constant() {
+        // Queried independently of `page_size()` so that re-hardcoding the
+        // constant cannot make this test agree with itself.
+        let mut expected: u64 = 0;
+        let mut size = std::mem::size_of::<u64>();
+        let result = unsafe {
+            libc::sysctlbyname(
+                c"hw.pagesize".as_ptr(),
+                std::ptr::addr_of_mut!(expected) as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        assert_eq!(result, libc::KERN_SUCCESS);
+        assert_eq!(page_size() as u64, expected);
+        assert!([4096, 16384, 65536].contains(&expected));
+    }
+
+    #[test]
+    fn memory_used_tracks_the_page_count_and_page_size() {
+        let memory = memory().expect("memory statistics unavailable");
+        let stats = vm_statistics().expect("vm statistics unavailable");
+        let pages = stats.active_count + stats.wire_count + stats.compressor_page_count;
+        let expected = pages as f64 * page_size() / BYTES_PER_GB;
+        assert!(
+            (memory.used_gb - expected).abs() < 0.01,
+            "used {:.2} GB does not match {pages} pages of {} bytes ({expected:.2} GB)",
+            memory.used_gb,
+            page_size()
+        );
     }
 }
