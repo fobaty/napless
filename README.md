@@ -38,8 +38,7 @@ settings, shows you what is running, and puts everything back on exit.
 | **Wakes on lid open** | Opening the lid brings the display straight back |
 | **Restores what it changed** | The previous `sleep` / `displaysleep` / `disablesleep` values are written back on Quit, Ctrl+C, SIGTERM or SIGHUP |
 | **Battery profile untouched** | Only the AC profile is ever modified |
-| **Live CPU, RAM, temperature and energy** | Read from Mach, the SMC and IOKit, with `powermetrics` for system power |
-| **Energy spent since start-up** | System power integrated over time into Wh or kWh |
+| **Live CPU, RAM, temperature and battery** | Read from Mach, the SMC and IOKit, no root and no helper process |
 
 > Lid-closed mode is a **maintenance and power-supply feature**. Running a
 > MacBook sealed in a bag with the lid shut restricts airflow and stresses the
@@ -92,7 +91,7 @@ Daemon mode prints live statistics:
 ```
 Lid-closed mode is active. You can close the lid now. Press Ctrl+C to stop.
 sleep=0 displaysleep=10 disablesleep=1
-active for 01:24:07  |  cpu  38%  |  ram 9.4/16.0 GB  |  battery 89% charging  |  system 6.2 W  |  spent 41 Wh  |  on battery: false
+active for 01:24:07  |  cpu  38%  |  ram 9.4/16.0 GB  |  battery 89% charging  |  on battery: false
 ```
 
 ## How it works
@@ -108,27 +107,30 @@ reports failures on stderr while still exiting `0`, so Napless treats a non-empt
 stderr as an error rather than trusting the exit status.
 
 The **battery** gauge reads the `AppleSmartBattery` registry entry over IOKit: charge
-share, charge state, and the power flowing into the pack. The charge share is derived
-from `CurrentCapacity` against `MaxCapacity` rather than assumed to be a percentage,
-since `MaxCapacity` is 100 on most packs but not all.
+share and charge state, the latter from the `ExternalConnected` and `IsCharging` flags
+because the sign of the current does not reliably indicate direction.
 
-The **system** gauge reports what the machine itself draws, taken from `powermetrics`
-and integrated over time into watt hours, switching to kilowatt hours past 100 Wh. The
-per-subsystem power lines and the combined figure are both accepted, and a cycle is
-recognised when a label repeats or the combined figure is published, so the reading
-does not depend on which samplers the tool offers. `powermetrics` needs root, which
-Napless already has, and it is stopped when the session ends so it never outlives it.
+### Why there is no energy meter
 
-Two limits are worth stating plainly. Apple documents `powermetrics` output as
-estimated rather than measured, so these totals approximate the real consumption.
-And the figures cover the CPU, GPU and ANE subsystems, not the display, the disks or
-the rest of the machine, so they sit below the true draw from the wall.
+An earlier version reported power in watts and integrated it into a running watt-hour
+total. It was removed because the numbers could not be trusted.
 
-The per-application breakdown is not available. macOS exposes no unprivileged way to
-attribute energy to individual apps, and the registry's `Accumulated*` telemetry is
-refreshed in bursts, so differencing it over a short interval yields anything from
-11 W to 190 W for the same machine. Integrating published power is the honest
-alternative.
+`powermetrics` was tried as the source for the system-wide figure. Apple documents its
+output as estimated rather than measured, it covers only the CPU, GPU and ANE
+subsystems, and it excludes the display, the disks and the losses in the power supply,
+so the total sat well below the real draw from the wall. Reading the pack's own
+`BatteryPower` instead is no better: it reports only what flows into the battery, so
+while plugged in it counts a fraction of what the machine consumes.
+
+The registry's `Accumulated*` counters were also ruled out. Apple refreshes them in
+bursts every half minute or so, so differencing them over a short window returned
+anything from 11 W to 190 W for the same machine under the same conditions.
+
+macOS has no cumulative energy counter, so any watt-hour total would have to be
+integrated from an estimate and would still reset whenever the process restarts. Only
+external hardware, such as a smart plug or a metering PDU, can measure real consumed
+energy. Showing a plausible-looking but unreliable number is worse than showing none,
+so the gauge reports charge and state and stops there.
 
 The charge share is derived from `CurrentCapacity` against `MaxCapacity` rather than
 assumed to be a percentage, since `MaxCapacity` is 100 on most packs but not all.

@@ -6,7 +6,6 @@ use eframe::egui;
 use crate::energy::{self, Energy};
 use crate::metrics::{self, CpuSampler, Memory, Temperature, TemperatureProbe};
 use crate::power;
-use crate::powermetrics::{SystemEnergy, SystemEnergyReading};
 use crate::session::{self, PowerState, Session};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(700);
@@ -16,7 +15,6 @@ struct Snapshot {
     memory: Option<Memory>,
     temperature: Temperature,
     energy: Option<Energy>,
-    system_energy: Option<SystemEnergyReading>,
 }
 
 pub fn run(session: Arc<Session>) -> Result<(), String> {
@@ -41,7 +39,6 @@ struct NaplessApp {
     cpu: CpuSampler,
     probe: TemperatureProbe,
     snapshot: Snapshot,
-    system_energy: SystemEnergy,
     last_sample: Instant,
     error: Option<String>,
     closing: bool,
@@ -58,9 +55,7 @@ impl NaplessApp {
                 memory: None,
                 temperature: Temperature::Pending,
                 energy: None,
-                system_energy: None,
             },
-            system_energy: SystemEnergy::start(),
             last_sample: Instant::now(),
             error: None,
             closing: false,
@@ -85,7 +80,6 @@ impl NaplessApp {
         self.snapshot.memory = metrics::memory();
         self.snapshot.temperature = self.probe.poll();
         self.snapshot.energy = energy::energy();
-        self.snapshot.system_energy = Some(self.system_energy.poll());
     }
 
     fn header(&self, ui: &mut egui::Ui, status: &session::Status) {
@@ -172,20 +166,6 @@ impl NaplessApp {
             energy_percent as f32,
         ));
         ui.add_space(4.0);
-
-        if let Some(system) = &self.snapshot.system_energy {
-            ui.label(match (system.watts, &system.error) {
-                (Some(watts), None) => {
-                    egui::RichText::new(format!("SYS   {watts:.1} W   spent {}", system.total))
-                        .monospace()
-                }
-                (_, Some(reason)) => {
-                    egui::RichText::new(format!("SYS   unavailable ({reason})")).weak()
-                }
-                _ => egui::RichText::new("SYS   reading\u{2026}").weak(),
-            });
-            ui.add_space(4.0);
-        }
 
         let temperature = match &self.snapshot.temperature {
             Temperature::Value(value) => {
