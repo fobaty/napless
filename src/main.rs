@@ -2,6 +2,7 @@ mod app;
 mod energy;
 mod metrics;
 mod power;
+mod powermetrics;
 mod session;
 
 use std::env;
@@ -136,7 +137,7 @@ fn announce(session: &Session, daemon: bool) {
 
 fn run_daemon(session: &Session) {
     let mut cpu = metrics::CpuSampler::default();
-    let mut meter = energy::EnergyMeter::new();
+    let mut system = powermetrics::SystemEnergy::start();
     let mut reported = false;
 
     while !session.shutdown_requested() {
@@ -152,18 +153,22 @@ fn run_daemon(session: &Session) {
         }
 
         let memory = metrics::memory().map(|m| format!("{:.1}/{:.1} GB", m.used_gb, m.total_gb));
-        let power = energy::energy().map(|e| {
-            meter.sample(e.watts);
-            format!("{}  |  spent {:.2} Wh", e.summary(), meter.watt_hours())
-        });
+        let reading = system.poll();
+        let system_line = match (reading.watts, &reading.error) {
+            (Some(watts), None) => format!("{watts:.1} W  |  spent {}", reading.total),
+            (_, Some(reason)) => format!("unavailable ({reason})"),
+            _ => "reading\u{2026}".to_string(),
+        };
+        let power = energy::energy().map(|e| e.summary());
         println!(
-            "active for {}  |  cpu {:>3}%  |  ram {}  |  battery {}  |  on battery: {}",
+            "active for {}  |  cpu {:>3}%  |  ram {}  |  battery {}  |  system {}  |  on battery: {}",
             session::format_elapsed(status.elapsed),
             cpu.sample()
                 .map(|percent| format!("{percent:.0}"))
                 .unwrap_or_else(|| "--".to_string()),
             memory.unwrap_or_else(|| "--".to_string()),
             power.unwrap_or_else(|| "--".to_string()),
+            system_line,
             status.on_battery_power,
         );
         reported = true;

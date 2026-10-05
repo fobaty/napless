@@ -190,6 +190,9 @@ impl EnergyMeter {
         self.sample_at(watts, Instant::now());
     }
 
+    /// Raw total in watt hours, for callers that need the number rather than a
+    /// formatted string.
+    #[cfg(test)]
     pub fn watt_hours(&self) -> f64 {
         self.watt_hours
     }
